@@ -1,0 +1,2 @@
+python-magic-0.4.12
+ipfs-api-0.2.3
