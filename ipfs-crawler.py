@@ -10,10 +10,31 @@ hashes = [
 ]
 
 
+crawl_results = {}
+def add_result(resource_hash, data):
+    """ Add crawler result. """
+
+    if resource_hash in crawl_results:
+        # Concatenate names, parents and parent_names
+
+        def update_entry(name):
+            data.update({
+                name: data[name].union(crawl_results[resource_hash][name])
+            })
+
+        update_entry('names')
+        update_entry('parents')
+
+    crawl_results[resource_hash] = data
+
+
 def crawl_data(data):
     # Identify file based on data
     mimetype = magic.from_buffer(data, mime=True)
 
+    main_type, sub_type = mimetype.split('/', 2)
+
+    print(main_type, sub_type)
     return {
         'mimetype': mimetype
     }
@@ -30,7 +51,7 @@ def read_data(resource_hash):
     return data
 
 
-def crawl_hash(resource_hash, name=None):
+def crawl_hash(resource_hash, name=None, parent_hash=None):
     # print("Crawling {0} ({1})".format(resource_hash, name))
 
     result = api.object_get(resource_hash)
@@ -42,7 +63,7 @@ def crawl_hash(resource_hash, name=None):
 
         for link in result['Links']:
             # crawl_hash(link['Hash'])
-            yield from crawl_hash(link['Hash'], link['Name'])
+            crawl_hash(link['Hash'], link['Name'], resource_hash)
 
     elif result['Data'][:2] == '\u0008\u0002':
         print("{0} ({1}) is a file, crawling contents".format(
@@ -54,24 +75,26 @@ def crawl_hash(resource_hash, name=None):
         crawl_result = crawl_data(data)
 
         stat = api.object_stat(resource_hash)
-        crawl_result.update({
-            'hash': resource_hash,
-            'names': set([name]),
-            'size': stat['CumulativeSize']
-        })
 
-        yield crawl_result
+        add_result(
+            resource_hash,
+            {
+                'names': set([name]),
+                'parents': set([resource_hash]),
+                'size': stat['CumulativeSize']
+            }
+        )
 
 
 def main():
     result_set = {}
 
     for current_hash in hashes:
-        results = crawl_hash(current_hash)
+        crawl_hash(current_hash)
 
-        for r in results:
-            result_set[r['hash']] = r
+    import pprint
+    pp = pprint.PrettyPrinter(width=41, compact=True)
 
-    print(result_set)
+    pp.pprint(crawl_results)
 
 main()
