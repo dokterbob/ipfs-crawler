@@ -47,11 +47,13 @@ def crawl_data(resource_hash):
 
     ipfs_path = '/ipfs/{0}'.format(resource_hash)
 
-    process = asyncio.create_subprocess_exec(['tika', '-j', ipfs_path], stdout=asyncio.subprocess.PIPE)
-    print('Doing the wait')
-    process.wait()
+    process = yield from asyncio.create_subprocess_exec('tika', '-j', ipfs_path, stdout=asyncio.subprocess.PIPE)
 
-    parsed_results = json.loads(process.stdout)
+    # Wait for results
+    yield from process.wait()
+
+    output = yield from process.stdout.read()
+    parsed_results = json.loads(output.decode("utf-8"))
 
     return parsed_results
 
@@ -61,12 +63,11 @@ def crawl_hash(resource_hash, name=None, parent_hash=None):
 
     # Check for existing items. Note: exists() without doc_type didn't work
 
-    if es.exists(index='ipfs', id=resource_hash, doc_type='_all'):
-        print('{0} ({1}): Already indexed.'.format(resource_hash, name))
-        return
+    # if es.exists(index='ipfs', id=resource_hash, doc_type='_all'):
+    #     print('{0} ({1}): Already indexed.'.format(resource_hash, name))
+    #     return
 
-    future_result = loop.run_in_executor(None, api.object_get, resource_hash)
-    result = yield from  future_result
+    result = api.object_get(resource_hash)
 
     if result['Data'] == '\x08\x01':
         print("{0} ({1}) is a directory, iterating files".format(
@@ -84,7 +85,7 @@ def crawl_hash(resource_hash, name=None, parent_hash=None):
             resource_hash, name
         ))
 
-        crawl_result = crawl_data(resource_hash)
+        crawl_result = yield from crawl_data(resource_hash)
         stat = api.object_stat(resource_hash)
 
         crawl_result.update({
@@ -98,11 +99,11 @@ def crawl_hash(resource_hash, name=None, parent_hash=None):
 
 @asyncio.coroutine
 def crawl_hashes(worker_number):
-    while True:
+    while not q.empty():
         queue_item = yield from q.get()
         print('Worker {0} started with: {1} ({2} items left)'.format(
             worker_number, queue_item[0], q.qsize()))
-        crawl_hash(*queue_item)
+        yield from crawl_hash(*queue_item)
 
 
 def main():
@@ -123,16 +124,10 @@ def main():
         q.put_nowait([current_hash])
 
     loop = asyncio.get_event_loop()
-    tasks = [
-        crawl_hashes(0),
-        crawl_hashes(1),
-        crawl_hashes(2),
-        crawl_hashes(3)
-    ]
 
+    tasks = [crawl_hashes(worker_number) for worker_number in range(8)]
     loop.run_until_complete(asyncio.wait(tasks))
     loop.close()
-
 
     # Perform test search
     res = es.search(index="ipfs", body={"query": {"match_all": {}}})
