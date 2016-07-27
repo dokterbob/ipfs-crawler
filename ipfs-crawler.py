@@ -4,6 +4,7 @@ api = ipfsApi.Client('127.0.0.1', 5001)
 import subprocess
 import json
 import argparse
+import asyncio
 
 hashes = [
     'QmbyLYvJ43xyUmrU5A2Ye4ZiPHXWmB4j5nYRSpiTLBhbtn',
@@ -13,6 +14,8 @@ hashes = [
 
 import elasticsearch
 es = elasticsearch.Elasticsearch()
+
+q = asyncio.Queue()
 
 
 def add_result(resource_hash, data):
@@ -43,16 +46,18 @@ def crawl_data(resource_hash):
     # Identify file based on data
 
     ipfs_path = '/ipfs/{0}'.format(resource_hash)
-    result = subprocess.run(['tika', '-j', ipfs_path],
-        check=True, stdout=subprocess.PIPE, universal_newlines=True)
 
-    parsed_results = json.loads(result.stdout)
+    process = asyncio.create_subprocess_exec(['tika', '-j', ipfs_path], stdout=asyncio.subprocess.PIPE)
+    print('Doing the wait')
+    process.wait()
+
+    parsed_results = json.loads(process.stdout)
 
     return parsed_results
 
 
 def crawl_hash(resource_hash, name=None, parent_hash=None):
-    # print("Crawling {0} ({1})".format(resource_hash, name))
+    print("Crawling {0} ({1})".format(resource_hash, name))
 
     # Check for existing items. Note: exists() without doc_type didn't work
 
@@ -60,7 +65,8 @@ def crawl_hash(resource_hash, name=None, parent_hash=None):
         print('{0} ({1}): Already indexed.'.format(resource_hash, name))
         return
 
-    result = api.object_get(resource_hash)
+    future_result = loop.run_in_executor(None, api.object_get, resource_hash)
+    result = yield from  future_result
 
     if result['Data'] == '\x08\x01':
         print("{0} ({1}) is a directory, iterating files".format(
@@ -69,7 +75,9 @@ def crawl_hash(resource_hash, name=None, parent_hash=None):
 
         for link in result['Links']:
             # crawl_hash(link['Hash'])
-            crawl_hash(link['Hash'], link['Name'], resource_hash)
+            # crawl_hash(link['Hash'], link['Name'], resource_hash)
+            q.put_nowait([link['Hash'], link['Name'], resource_hash])
+
 
     elif result['Data'][:2] == '\u0008\u0002':
         print("{0} ({1}) is a file, crawling contents".format(
@@ -88,6 +96,15 @@ def crawl_hash(resource_hash, name=None, parent_hash=None):
         add_result(resource_hash, crawl_result)
 
 
+@asyncio.coroutine
+def crawl_hashes(worker_number):
+    while True:
+        queue_item = yield from q.get()
+        print('Worker {0} started with: {1} ({2} items left)'.format(
+            worker_number, queue_item[0], q.qsize()))
+        crawl_hash(*queue_item)
+
+
 def main():
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Crawl IPFS hashes.')
@@ -103,7 +120,19 @@ def main():
 
     # Crawling
     for current_hash in args.hashes:
-        crawl_hash(current_hash)
+        q.put_nowait([current_hash])
+
+    loop = asyncio.get_event_loop()
+    tasks = [
+        crawl_hashes(0),
+        crawl_hashes(1),
+        crawl_hashes(2),
+        crawl_hashes(3)
+    ]
+
+    loop.run_until_complete(asyncio.wait(tasks))
+    loop.close()
+
 
     # Perform test search
     res = es.search(index="ipfs", body={"query": {"match_all": {}}})
@@ -111,6 +140,6 @@ def main():
     import pprint
     pp = pprint.PrettyPrinter(width=41, compact=True)
 
-    pp.pprint(res)
+    # pp.pprint(res)
 
 main()
