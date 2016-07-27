@@ -10,22 +10,32 @@ hashes = [
     'QmQ4EvvCrx2cjY3AWVosfeyy7aKCf3WSVrKomRf1wbvQnW'
 ]
 
-crawl_results = {}
+import elasticsearch
+es = elasticsearch.Elasticsearch()
+
+
 def add_result(resource_hash, data):
     """ Add crawler result. """
 
-    if resource_hash in crawl_results:
+    assert 'Content-Type' in data
+    doc_type = data['Content-Type'].split('/',1)[0]
+
+    try:
         # Concatenate names, parents and parent_names
+        res = es.get(index='ipfs', id=resource_hash, doc_type=doc_type)
 
         def update_entry(name):
             data.update({
-                name: list(set(data[name] + crawl_results[resource_hash][name]))
+                name: list(set(data[name] + res['_source'][name]))
             })
 
         update_entry('names')
         update_entry('parents')
 
-    crawl_results[resource_hash] = data
+    except elasticsearch.exceptions.NotFoundError:
+        pass
+
+    es.index(index='ipfs', doc_type=doc_type, id=resource_hash, body=data)
 
 
 def crawl_data(resource_hash):
@@ -42,6 +52,15 @@ def crawl_data(resource_hash):
 
 def crawl_hash(resource_hash, name=None, parent_hash=None):
     # print("Crawling {0} ({1})".format(resource_hash, name))
+
+    # Check for existing items. Note: exists() without doc_type didn't work
+    try:
+        es.get(index='ipfs', id=resource_hash)
+
+        print('{0} ({1}): Already indexed.'.format(resource_hash, name))
+        return
+    except elasticsearch.exceptions.NotFoundError:
+        pass
 
     result = api.object_get(resource_hash)
 
@@ -60,12 +79,11 @@ def crawl_hash(resource_hash, name=None, parent_hash=None):
         ))
 
         crawl_result = crawl_data(resource_hash)
-
         stat = api.object_stat(resource_hash)
 
         crawl_result.update({
-            'names': [name],
-            'parents': [resource_hash],
+            'names': [name] if name else [],
+            'parents': [resource_hash] if resource_hash else [],
             'size': stat['CumulativeSize']
         })
 
@@ -73,14 +91,19 @@ def crawl_hash(resource_hash, name=None, parent_hash=None):
 
 
 def main():
-    result_set = {}
+    # Assure index exists
+    ic = elasticsearch.client.IndicesClient(es)
+
+    if not ic.exists('ipfs'):
+        ic.create('ipfs')
 
     for current_hash in hashes:
         crawl_hash(current_hash)
 
-    import pprint
-    pp = pprint.PrettyPrinter(width=41, compact=True)
 
-    pp.pprint(crawl_results)
+    res = es.search(index="ipfs", body={"query": {"match_all": {}}})
+    print("Got %d Hits:" % res['hits']['total'])
+    for hit in res['hits']['hits']:
+        print(hit)
 
 main()
