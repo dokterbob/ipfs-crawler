@@ -1,8 +1,8 @@
 import ipfsApi
 api = ipfsApi.Client('127.0.0.1', 5001)
 
-import magic
 import requests
+from tika import parser as tika_parser
 
 hashes = [
     'QmTyPtsw49JV1iFMwtvCVCFP1QwFL4cGsxz2ZtHZJyJY5F',
@@ -30,14 +30,9 @@ def add_result(resource_hash, data):
 
 def crawl_data(data):
     # Identify file based on data
-    mimetype = magic.from_buffer(data, mime=True)
-
-    main_type, sub_type = mimetype.split('/', 2)
-
-    print(main_type, sub_type)
-    return {
-        'mimetype': mimetype
-    }
+    data = tika_parser.from_buffer(data)
+    print(data)
+    return data
 
 
 def read_data(resource_hash):
@@ -46,7 +41,7 @@ def read_data(resource_hash):
 
     url = 'http://127.0.0.1:8080/ipfs/{0}'.format(resource_hash)
     with closing(requests.get(url, stream=True)) as r:
-        data = r.raw.read(1024)
+        data = r.raw.read()
 
     return data
 
