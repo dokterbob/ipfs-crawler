@@ -55,13 +55,10 @@ def crawl_hash(resource_hash, name=None, parent_hash=None):
     # print("Crawling {0} ({1})".format(resource_hash, name))
 
     # Check for existing items. Note: exists() without doc_type didn't work
-    try:
-        es.get(index='ipfs', id=resource_hash)
 
+    if es.exists(index='ipfs', id=resource_hash, doc_type='_all'):
         print('{0} ({1}): Already indexed.'.format(resource_hash, name))
         return
-    except elasticsearch.exceptions.NotFoundError:
-        pass
 
     result = api.object_get(resource_hash)
 
