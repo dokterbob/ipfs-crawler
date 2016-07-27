@@ -3,6 +3,7 @@ api = ipfsApi.Client('127.0.0.1', 5001)
 
 import subprocess
 import json
+import argparse
 
 hashes = [
     'QmbyLYvJ43xyUmrU5A2Ye4ZiPHXWmB4j5nYRSpiTLBhbtn',
@@ -91,19 +92,28 @@ def crawl_hash(resource_hash, name=None, parent_hash=None):
 
 
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Crawl IPFS hashes.')
+    parser.add_argument('hashes', nargs='+')
+
+    args = parser.parse_args()
+
     # Assure index exists
     ic = elasticsearch.client.IndicesClient(es)
 
     if not ic.exists('ipfs'):
         ic.create('ipfs')
 
-    for current_hash in hashes:
+    # Crawling
+    for current_hash in args.hashes:
         crawl_hash(current_hash)
 
-
+    # Perform test search
     res = es.search(index="ipfs", body={"query": {"match_all": {}}})
-    print("Got %d Hits:" % res['hits']['total'])
-    for hit in res['hits']['hits']:
-        print(hit)
+
+    import pprint
+    pp = pprint.PrettyPrinter(width=41, compact=True)
+
+    pp.pprint(res)
 
 main()
