@@ -5,14 +5,8 @@ import subprocess
 import json
 import argparse
 import asyncio
-
-hashes = [
-    'QmbyLYvJ43xyUmrU5A2Ye4ZiPHXWmB4j5nYRSpiTLBhbtn',
-    'QmTyPtsw49JV1iFMwtvCVCFP1QwFL4cGsxz2ZtHZJyJY5F',
-    'QmQ4EvvCrx2cjY3AWVosfeyy7aKCf3WSVrKomRf1wbvQnW'
-]
-
 import elasticsearch
+
 es = elasticsearch.Elasticsearch()
 
 q = asyncio.Queue()
@@ -41,6 +35,15 @@ def add_result(resource_hash, data):
 
     es.index(index='ipfs', doc_type=doc_type, id=resource_hash, body=data)
 
+    import pprint
+    pp = pprint.PrettyPrinter(width=41, compact=True)
+
+    pp.pprint(data)
+
+
+class CrawlException(Exception):
+    pass
+
 
 def crawl_data(resource_hash):
     # Identify file based on data
@@ -52,7 +55,11 @@ def crawl_data(resource_hash):
     # Wait for results
     yield from process.wait()
 
+    if not process.returncode == 0:
+        raise CrawlException("Non-zero return code from tika")
+
     output = yield from process.stdout.read()
+
     parsed_results = json.loads(output.decode("utf-8"))
 
     return parsed_results
@@ -63,9 +70,9 @@ def crawl_hash(resource_hash, name=None, parent_hash=None):
 
     # Check for existing items. Note: exists() without doc_type didn't work
 
-    # if es.exists(index='ipfs', id=resource_hash, doc_type='_all'):
-    #     print('{0} ({1}): Already indexed.'.format(resource_hash, name))
-    #     return
+    if es.exists(index='ipfs', id=resource_hash, doc_type='_all'):
+        print('{0} ({1}): Already indexed.'.format(resource_hash, name))
+        return
 
     result = api.object_get(resource_hash)
 
@@ -79,13 +86,26 @@ def crawl_hash(resource_hash, name=None, parent_hash=None):
             # crawl_hash(link['Hash'], link['Name'], resource_hash)
             q.put_nowait([link['Hash'], link['Name'], resource_hash])
 
+        #     childre
+
+        # data = {
+        #     'c'
+
+        # }
+        # es.index(index='ipfs', doc_type='directory', id=resource_hash, body=data)
+
 
     elif result['Data'][:2] == '\u0008\u0002':
         print("{0} ({1}) is a file, crawling contents".format(
             resource_hash, name
         ))
 
-        crawl_result = yield from crawl_data(resource_hash)
+        try:
+            crawl_result = yield from crawl_data(resource_hash)
+        except CrawlException:
+            print('Exception in crawling, skipping file.')
+            return
+
         stat = api.object_stat(resource_hash)
 
         crawl_result.update({
@@ -131,10 +151,5 @@ def main():
 
     # Perform test search
     res = es.search(index="ipfs", body={"query": {"match_all": {}}})
-
-    import pprint
-    pp = pprint.PrettyPrinter(width=41, compact=True)
-
-    # pp.pprint(res)
 
 main()
