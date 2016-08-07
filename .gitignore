@@ -87,3 +87,8 @@ ENV/
 
 # Rope project settings
 .ropeproject
+
+# Seed hashes and URLs
+hashes.txt
+urls.txt
+
